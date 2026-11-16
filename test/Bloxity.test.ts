@@ -4,7 +4,7 @@ import type { ColyseusTestServer } from "@colyseus/testing";
 import type appConfig from "../src/app.config.js";
 import { WorldState } from "../src/rooms/schema/WorldState.js";
 import { __setPlayersForTest } from "../src/db.js";
-import { __setFetchForTest, __setVerifierForTest, reportLeaderboards, reportStats, verifyAdReward, verifyToken } from "../src/bloxity.js";
+import { __setFetchForTest, __setVerifierForTest, reportLeaderboards, reportRooms, reportStats, verifyAdReward, verifyToken } from "../src/bloxity.js";
 import { fakePlayers, sleep } from "./fakePlayers.js";
 import { fakeVerify, testServer } from "./server.js";
 
@@ -136,6 +136,43 @@ describe("bloxity", () => {
       await reportStats();
       await reportLeaderboards();
       assert.strictEqual(calls.length, 0);
+    });
+
+    it("list the live rooms (players, size, locked) to the Bloxity matchmaker, so Open Rooms can show them", async () => {
+      hostingEnv();
+      process.env.MATCHMAKER_REPORT_URL = "https://mm.test/report/";
+      process.env.POD_NAME = "pod-7";
+      const calls = fakeNet();
+      const room = await colyseus.createRoom<WorldState>("world", {});
+      await colyseus.connectTo(room, { username: "A" });
+      await colyseus.connectTo(room, { username: "B" });
+      await sleep(100);
+      await reportRooms();
+      const post = calls.find((c) => c.url === "https://mm.test/report/risky-heist/rooms".replace("report//", "report/"))!;
+      assert.ok(post, "posted to {MATCHMAKER_REPORT_URL}/{gameId}/rooms");
+      assert.strictEqual((post.init.headers as any).authorization, "Bearer report-secret");
+      assert.strictEqual(post.body.podName, "pod-7");
+      const mine = post.body.rooms.find((r: any) => r.colyseusRoomId === room.roomId);
+      assert.ok(mine, "this room is listed");
+      assert.strictEqual(mine.name, "world");
+      assert.strictEqual(mine.clients, 2);
+      assert.strictEqual(mine.maxClients, 6, "the room size the matchmaker sizes pods from");
+      assert.strictEqual(mine.locked, false);
+      assert.ok(post.body.players >= 2);
+    });
+
+    it("do nothing for rooms without MATCHMAKER_REPORT_URL, and never throw when the matchmaker is down", async () => {
+      hostingEnv();
+      delete process.env.MATCHMAKER_REPORT_URL;
+      let calls = fakeNet();
+      await reportRooms();
+      assert.strictEqual(calls.length, 0);
+      process.env.MATCHMAKER_REPORT_URL = "https://mm.test";
+      __setFetchForTest((async () => {
+        throw new Error("matchmaker down");
+      }) as unknown as typeof fetch);
+      await reportRooms(); // must resolve
+      calls = fakeNet();
     });
 
     it("report the signed-in players' stats and scores from the server's copy, never guests'", async () => {
