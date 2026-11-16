@@ -1,8 +1,8 @@
 import {
-  CURRENCY_MAX, REBIRTHS_MAX, DISTANCE_MAX, PLAY_SECONDS_MAX, OWNED_MAX, PETS_MAX, PET_TIERS_MAX,
-  PET_SLOTS_MAX, GIFTS_MAX, POTION_KINDS_MAX, POTION_COUNT_MAX, ID_PATTERN,
+  CURRENCY_MAX, REBIRTHS_MAX, COUNT_MAX, TIME_MAX, SLOTS_MAX, CARRY_MAX, TOOLS_MAX, FLOOR_MAX, DISCOVERED_MAX,
+  RARITY_KEYS_MAX, DAILY_DAYS, ID_PATTERN,
 } from "./constants.js";
-import type { PlayerDoc, SavedPet } from "./db.js";
+import type { PlayerDoc, SavedDaily, SavedSlot, SavedStats } from "./db.js";
 
 export function finite(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
@@ -18,82 +18,88 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 const isId = (v: unknown): v is string => typeof v === "string" && ID_PATTERN.test(v);
 
-// Catalog ids (boats, engines, partners, trails): slug strings, no duplicates, bounded count.
-export function sanitizeIds(raw: unknown, max = OWNED_MAX): string[] {
-  if (!Array.isArray(raw)) return [];
-  return [...new Set(raw.filter(isId))].slice(0, max);
+// Treasure ids in order, repeats kept (the same treasure can be held or placed twice), bounded.
+function idList(raw: unknown, max: number): string[] {
+  return Array.isArray(raw) ? raw.filter(isId).slice(0, max) : [];
 }
 
-// Owned pets { kind, tier, equipped, locked }: slug kinds, integer tiers, at most PETS_MAX, and no
-// more than `slots` of them equipped (the extra ones are unequipped, never dropped).
-export function sanitizePets(raw: unknown, slots = PET_SLOTS_MAX): SavedPet[] {
-  if (!Array.isArray(raw)) return [];
-  const out: SavedPet[] = [];
-  let equipped = 0;
-  for (const p of raw) {
-    if (out.length >= PETS_MAX) break;
-    if (!isObject(p) || !isId(p.kind) || !Number.isInteger(p.tier) || (p.tier as number) < 0 || (p.tier as number) >= PET_TIERS_MAX) continue;
-    const on = p.equipped === true && equipped < slots;
-    if (on) equipped++;
-    out.push({ kind: p.kind, tier: p.tier as number, equipped: on, locked: p.locked === true });
-  }
-  return out;
+// A list of distinct ids (the Index).
+function idSet(raw: unknown, max: number): string[] {
+  return [...new Set(idList(raw, Infinity))].slice(0, max);
 }
 
-// Potion counts { id: n }: slug ids, whole non-negative counts, bounded kinds.
-function sanitizePotions(raw: unknown): Record<string, number> {
-  const out: Record<string, number> = {};
+// Owned tool indexes: whole numbers in range, no duplicates.
+function toolIndexes(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  const ok = raw.filter((i): i is number => Number.isInteger(i) && i >= 0 && i < TOOLS_MAX);
+  return [...new Set(ok)].sort((a, b) => a - b);
+}
+
+// The base's slots, position by position: a treasure id or null, and the cash it has stored.
+function sanitizeSlots(raw: unknown): SavedSlot[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, SLOTS_MAX).map((s) => {
+    const slot = isObject(s) ? s : {};
+    return { id: isId(slot.id) ? slot.id : null, stored: finite(slot.stored) ? clampNum(slot.stored, CURRENCY_MAX) : 0 };
+  });
+}
+
+function sanitizeStats(raw: unknown): SavedStats {
+  const s = isObject(raw) ? raw : {};
+  const count = (v: unknown) => (finite(v) ? clampInt(v, COUNT_MAX) : 0);
+  return {
+    stolen: count(s.stolen),
+    heists: count(s.heists),
+    earned: finite(s.earned) ? clampNum(s.earned, CURRENCY_MAX) : 0,
+    busts: count(s.busts),
+    bestId: isId(s.bestId) ? s.bestId : null,
+    maxFloor: finite(s.maxFloor) ? clampInt(s.maxFloor, FLOOR_MAX, 1) : 1,
+  };
+}
+
+// Daily Gifts: day 1..DAILY_DAYS, one claimed flag per day, the next unlock time.
+function sanitizeDaily(raw: unknown): SavedDaily {
+  const d = isObject(raw) ? raw : {};
+  const claimed = Array.isArray(d.claimed) ? d.claimed : [];
+  return {
+    day: finite(d.day) ? clampInt(d.day, DAILY_DAYS, 1) : 1,
+    claimed: Array.from({ length: DAILY_DAYS }, (_, i) => claimed[i] === true),
+    nextAt: finite(d.nextAt) ? clampNum(d.nextAt, TIME_MAX) : 0,
+  };
+}
+
+// { rarity id: value } maps (timed-spawn clocks, pending flags): slug keys, bounded count.
+function sanitizeMap<T>(raw: unknown, ok: (v: unknown) => v is T, fix: (v: T) => T): Record<string, T> {
+  const out: Record<string, T> = {};
   if (!isObject(raw)) return out;
-  for (const [id, n] of Object.entries(raw)) {
-    if (Object.keys(out).length >= POTION_KINDS_MAX) break;
-    if (isId(id) && finite(n)) out[id] = clampInt(n, POTION_COUNT_MAX);
+  for (const [k, v] of Object.entries(raw)) {
+    if (Object.keys(out).length >= RARITY_KEYS_MAX) break;
+    if (isId(k) && ok(v)) out[k] = fix(v);
   }
   return out;
-}
-
-// One owned list + its equipped id. The equipped one must be owned ("" = none); when this save
-// doesn't carry the list, trust the id's shape only.
-function ownedPair(raw: Record<string, unknown>, out: Partial<PlayerDoc>, listKey: "boats" | "engines" | "partners" | "trails", idKey: "boat" | "engine" | "partner" | "trail") {
-  if (raw[listKey] !== undefined) out[listKey] = sanitizeIds(raw[listKey]);
-  const id = raw[idKey];
-  const owned = out[listKey];
-  if (id === "") out[idKey] = "";
-  else if (isId(id) && (!owned || owned.includes(id))) out[idKey] = id;
 }
 
 // The game is client-authoritative -- no server-side gameplay validation. What IS enforced:
 // shape and bounds, so a malformed payload can never corrupt this player's own Mongo document.
-// A forged number can only ever affect the sender's own save.
+// A forged number can only ever affect the sender's own save. Idempotent: the same function
+// cleans the doc read back from Mongo.
 export function sanitizeProgress(raw: unknown): Partial<PlayerDoc> | null {
   if (!isObject(raw)) return null;
   const out: Partial<PlayerDoc> = {};
 
-  if (finite(raw.trophies)) out.trophies = clampNum(raw.trophies, CURRENCY_MAX);
-  if (finite(raw.gems)) out.gems = clampNum(raw.gems, CURRENCY_MAX);
-  if (finite(raw.energy)) out.energy = clampNum(raw.energy, CURRENCY_MAX);
+  if (finite(raw.money)) out.money = clampNum(raw.money, CURRENCY_MAX);
+  if (finite(raw.carryCap)) out.carryCap = clampInt(raw.carryCap, CARRY_MAX, 1);
+  if (finite(raw.unlocked)) out.unlocked = clampInt(raw.unlocked, SLOTS_MAX, 1);
+  if (finite(raw.tool)) out.tool = clampInt(raw.tool, TOOLS_MAX - 1);
+  if (raw.owned !== undefined) out.owned = toolIndexes(raw.owned);
+  if (raw.slots !== undefined) out.slots = sanitizeSlots(raw.slots);
+  if (raw.carried !== undefined) out.carried = idList(raw.carried, CARRY_MAX);
+  if (raw.discovered !== undefined) out.discovered = idSet(raw.discovered, DISCOVERED_MAX);
   if (finite(raw.rebirths)) out.rebirths = clampInt(raw.rebirths, REBIRTHS_MAX);
-  if (typeof raw.autoRebirth === "boolean") out.autoRebirth = raw.autoRebirth;
-  if (finite(raw.bestDistance)) out.bestDistance = clampNum(raw.bestDistance, DISTANCE_MAX);
-  if (finite(raw.playtime)) out.playtime = clampInt(raw.playtime, PLAY_SECONDS_MAX);
+  if (raw.daily !== undefined) out.daily = sanitizeDaily(raw.daily);
+  if (raw.stats !== undefined) out.stats = sanitizeStats(raw.stats);
+  if (raw.spawns !== undefined) out.spawns = sanitizeMap(raw.spawns, finite, (v) => clampNum(v, TIME_MAX));
+  if (raw.pending !== undefined) out.pending = sanitizeMap(raw.pending, (v): v is boolean => typeof v === "boolean", (v) => v);
   if (finite(raw.lastSeen)) out.lastSeen = clampInt(raw.lastSeen, Date.now() + 10 * 60 * 1000);
-
-  ownedPair(raw, out, "boats", "boat");
-  ownedPair(raw, out, "engines", "engine");
-  ownedPair(raw, out, "partners", "partner");
-  ownedPair(raw, out, "trails", "trail");
-
-  if (finite(raw.petSlots)) out.petSlots = clampInt(raw.petSlots, PET_SLOTS_MAX, 1);
-  if (finite(raw.petStorage)) out.petStorage = clampInt(raw.petStorage, PETS_MAX, 1);
-  if (raw.pets !== undefined) out.pets = sanitizePets(raw.pets, out.petSlots ?? PET_SLOTS_MAX);
-  if (raw.eggsSeen !== undefined) out.eggsSeen = sanitizeIds(raw.eggsSeen);
-  if (raw.world === "" || isId(raw.world)) out.world = raw.world as string;
-  if (raw.worldsUnlocked !== undefined) out.worldsUnlocked = sanitizeIds(raw.worldsUnlocked);
-
-  if (finite(raw.giftTime)) out.giftTime = clampInt(raw.giftTime, PLAY_SECONDS_MAX);
-  if (raw.giftsClaimed !== undefined) {
-    const claimed = Array.isArray(raw.giftsClaimed) ? raw.giftsClaimed.filter((i): i is number => Number.isInteger(i) && i >= 0 && i < GIFTS_MAX) : [];
-    out.giftsClaimed = [...new Set(claimed)];
-  }
-  if (raw.potions !== undefined) out.potions = sanitizePotions(raw.potions);
   return out;
 }

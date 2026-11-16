@@ -1,58 +1,56 @@
 import { MongoClient, type Collection } from "mongodb";
 
-import { LEADERBOARD_STATS } from "./constants.js";
+import { LEADERBOARD_FIELDS, LEADERBOARD_STATS } from "./constants.js";
 
 // Bloxity Legion hosting injects MONGODB_URI per game+channel -- an isolated database with
 // scoped credentials. A local `npm start` normally has no Mongo reachable, so a missing or
 // unreachable URI must degrade to "no persistence" rather than crash the room.
 
-// The persisted client state (what `saveProgress` carries, see sanitize.ts). The client keeps
-// nothing in the browser: this document is the player's only save.
+// The persisted client state (what `saveProgress` carries, see sanitize.ts; the client's
+// heist/game.js `state`). The client keeps nothing in the browser: this document is the
+// player's only save.
 export interface PlayerDoc {
   _id: string; // Bloxity user id -- see WorldRoom.ts (guests are never saved)
   username?: string; // display name as of the last save
-  trophies?: number; // Wins (the HUD's trophy counter, the shop currency)
-  gems?: number;
-  energy?: number; // lightning (rebirth.js), the race speed
+  money?: number; // cash on hand
+  carryCap?: number; // items that can be carried at once
+  unlocked?: number; // base slots unlocked
+  tool?: number; // index of the equipped tool (client TOOLS)
+  owned?: number[]; // owned tool indexes
+  slots?: SavedSlot[]; // the base's slots, in order (null id = empty)
+  carried?: string[]; // treasure ids in the player's hands
+  discovered?: string[]; // treasure ids ever found (the Index)
   rebirths?: number;
-  autoRebirth?: boolean;
-  bestDistance?: number; // personal best race, studs (only ever goes up)
-  playtime?: number; // s with the game visible
-  boats?: string[]; // owned boat ids (client BOATS.list)
-  boat?: string; // the equipped boat (an owned one)
-  engines?: string[]; // owned engine ids (client engine.js ENGINES)
-  engine?: string; // the equipped engine, "" = none
-  partners?: string[]; // owned partner ids (client PARTNER.partners)
-  partner?: string; // the equipped partner, "" = none
-  trails?: string[]; // owned trail ids (client TRAILS.list)
-  trail?: string; // the equipped trail, "" = none
-  pets?: SavedPet[]; // owned pets (client pets.js), at most PETS_MAX
-  petSlots?: number; // pets equipped at once
-  petStorage?: number; // pets owned at most
-  eggsSeen?: string[]; // pet kinds ever hatched (client eggs.js: the NEW! tag)
-  world?: string; // the world the player was in (client worlds.js WORLDS), "" = the start world
-  worldsUnlocked?: string[]; // worlds whose portal requirement was met once (they stay open)
-  giftTime?: number; // Online Gifts clock, s online this round
-  giftsClaimed?: number[]; // GIFTS.list indexes claimed this round
-  potions?: Record<string, number>; // potion id -> count (gifts.js)
-  lastSeen?: number; // epoch ms of the last activity
-  // Spin wheel (spin.ts): written only by the server's `spin` handler, never by saveProgress.
-  spins?: number; // spins ready to use
-  spinAt?: number; // epoch ms the next free spin arrives
-  // Daily Reward (daily.ts): written by the server only, never by saveProgress.
-  dailyDay?: number; // days unlocked this cycle
-  dailyLast?: number; // UTC day index of the last unlock
-  dailyClaimed?: number[]; // claimed day indexes this cycle
+  daily?: SavedDaily; // Daily Gifts
+  stats?: SavedStats;
+  spawns?: Record<string, number>; // rarity -> epoch ms its next timed spawn arrives
+  pending?: Record<string, boolean>; // rarity -> a timed spawn waits for the next heist
+  lastSeen?: number; // epoch ms of the last activity (collectors fill while away)
   version: number;
   updatedAt: Date;
 }
 
-// One owned pet: its kind (client PETS.kinds key) and craft tier (index into PETS.tiers).
-export interface SavedPet {
-  kind: string;
-  tier: number;
-  equipped: boolean;
-  locked: boolean;
+// One base slot: the treasure placed on it and the cash its collector holds.
+export interface SavedSlot {
+  id: string | null;
+  stored: number;
+}
+
+// Daily Gifts: the day unlocked this cycle (1..DAILY_DAYS), which days were claimed, and when the
+// next day unlocks (epoch ms, the client's clock).
+export interface SavedDaily {
+  day: number;
+  claimed: boolean[];
+  nextAt: number;
+}
+
+export interface SavedStats {
+  stolen: number;
+  heists: number;
+  earned: number;
+  busts: number;
+  bestId: string | null;
+  maxFloor: number;
 }
 
 let client: MongoClient | null = null;
@@ -72,7 +70,8 @@ export async function connectDb(): Promise<void> {
     console.log("[db] connected to MongoDB");
     // The leaderboards sort and count by these (leaderboard.ts).
     for (const stat of LEADERBOARD_STATS) {
-      players.createIndex({ [stat]: -1 }).catch((err) => console.warn(`[db] index on ${stat} failed`, err));
+      const field = LEADERBOARD_FIELDS[stat];
+      players.createIndex({ [field]: -1 }).catch((err) => console.warn(`[db] index on ${field} failed`, err));
     }
   } catch (err) {
     console.warn("[db] connect failed -- player progress will not persist:", err);

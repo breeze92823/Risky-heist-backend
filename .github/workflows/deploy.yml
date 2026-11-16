@@ -81,8 +81,9 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.GAME_ID }}-server:${{ steps.channel.outputs.channel }}-${{ github.sha }}
 
-      # roomSize = players per room (WorldRoom's maxClients, ROOM_MAX_CLIENTS in src/constants.ts);
-      # the Bloxity matchmaker picks the pod capacity itself, so no seatCap is sent.
+      # roomSize = players per room = WorldRoom's maxClients (ROOM_MAX_CLIENTS in src/constants.ts, 2-100).
+      # Per the SDK docs (https://docs.bloxity.io, "Multiplayer connection"): send roomSize, never seatCap.
+      # Each base belongs to one player, so a room holds one player per base (6).
       - name: Deploy to Legion
         run: |
           ROOM_SIZE=$(grep -oP 'ROOM_MAX_CLIENTS\s*=\s*\K\d+' src/constants.ts)

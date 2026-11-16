@@ -1,58 +1,69 @@
 import assert from "assert";
 
-import { CURRENCY_MAX } from "../src/constants.js";
+import { CARRY_MAX, CURRENCY_MAX, DAILY_DAYS, SLOTS_MAX } from "../src/constants.js";
 import { sanitizeProgress } from "../src/sanitize.js";
 
 describe("sanitizeProgress", () => {
   it("rejects non-objects and bounds numbers", () => {
     assert.strictEqual(sanitizeProgress(null), null);
     assert.strictEqual(sanitizeProgress([1]), null);
-    const out = sanitizeProgress({ trophies: 1e40, gems: -5, energy: NaN, rebirths: 3.7, autoRebirth: "yes", hack: "x" })!;
-    assert.strictEqual(out.trophies, CURRENCY_MAX);
-    assert.strictEqual(out.gems, 0);
-    assert.strictEqual(out.energy, undefined);
+    const out = sanitizeProgress({ money: 1e40, rebirths: 3.7, carryCap: 0, unlocked: 1e9, tool: -4, lastSeen: NaN, hack: "x" })!;
+    assert.strictEqual(out.money, CURRENCY_MAX);
     assert.strictEqual(out.rebirths, 3);
-    assert.strictEqual(out.autoRebirth, undefined);
+    assert.strictEqual(out.carryCap, 1, "at least one carry slot");
+    assert.strictEqual(out.unlocked, SLOTS_MAX);
+    assert.strictEqual(out.tool, 0);
+    assert.strictEqual(out.lastSeen, undefined);
     assert.ok(!("hack" in out));
+    assert.strictEqual(sanitizeProgress({ money: -5 })!.money, 0);
+    assert.strictEqual(sanitizeProgress({ money: "9" })!.money, undefined);
   });
 
-  it("keeps well-formed catalog ids and only equips an owned one", () => {
-    const out = sanitizeProgress({ boats: ["raft", "canoe", "canoe", "Bad Id!", 7], boat: "canoe", engines: ["basic", "ladder-3"], engine: "ladder-9" })!;
-    assert.deepStrictEqual(out.boats, ["raft", "canoe"]);
-    assert.strictEqual(out.boat, "canoe");
-    assert.deepStrictEqual(out.engines, ["basic", "ladder-3"]);
-    assert.strictEqual(out.engine, undefined);
-    assert.strictEqual(sanitizeProgress({ partner: "" })!.partner, "");
-    assert.strictEqual(sanitizeProgress({ trail: "waterRipple" })!.trail, "waterRipple");
-  });
-
-  it("keeps well-formed pets and caps the equipped ones at the slots", () => {
+  it("keeps base slots in position, with bad ids and amounts emptied", () => {
     const out = sanitizeProgress({
-      petSlots: 2,
-      pets: [
-        { kind: "dog", tier: 0, equipped: true, locked: false },
-        { kind: "cat", tier: 1.5, equipped: true },
-        { kind: "Bad Id!", tier: 0 },
-        { kind: "fox", tier: 2, equipped: true, locked: true },
-        { kind: "bear", tier: 0, equipped: true },
-        "x",
-      ],
+      slots: [{ id: "coin", stored: 12.5 }, { id: null, stored: 0 }, { id: "Bad Id!", stored: -3 }, { id: "coin", stored: "x" }, "junk"],
     })!;
-    assert.deepStrictEqual(sanitizeProgress({ eggsSeen: ["dog", "dog", "Bad Id!", "dragon"] })!.eggsSeen, ["dog", "dragon"]);
-    const worlds = sanitizeProgress({ world: "city", worldsUnlocked: ["city", "city", "Bad Id!"] })!;
-    assert.deepStrictEqual([worlds.world, worlds.worldsUnlocked], ["city", ["city"]]);
-    assert.strictEqual(sanitizeProgress({ world: "Bad World!" })!.world, undefined);
-    assert.deepStrictEqual(out.pets, [
-      { kind: "dog", tier: 0, equipped: true, locked: false },
-      { kind: "fox", tier: 2, equipped: true, locked: true },
-      { kind: "bear", tier: 0, equipped: false, locked: false },
+    assert.deepStrictEqual(out.slots, [
+      { id: "coin", stored: 12.5 },
+      { id: null, stored: 0 },
+      { id: null, stored: 0 },
+      { id: "coin", stored: 0 },
+      { id: null, stored: 0 },
     ]);
+    assert.strictEqual(sanitizeProgress({ slots: Array.from({ length: 500 }, () => ({ id: "coin", stored: 0 })) })!.slots!.length, SLOTS_MAX);
   });
 
-  it("bounds the Online Gifts state", () => {
-    const out = sanitizeProgress({ giftTime: -4, giftsClaimed: [0, 0, 3, 99, "1"], potions: { golden: 2.9, "bad id": 1, doubleWin: "x" } })!;
-    assert.strictEqual(out.giftTime, 0);
-    assert.deepStrictEqual(out.giftsClaimed, [0, 3]);
-    assert.deepStrictEqual(out.potions, { golden: 2 });
+  it("keeps carried treasures (repeats allowed) and a distinct Index", () => {
+    const out = sanitizeProgress({ carried: ["coin", "coin", "Bad Id!", 7, "ruby"], discovered: ["coin", "coin", "ruby", "no way"] })!;
+    assert.deepStrictEqual(out.carried, ["coin", "coin", "ruby"]);
+    assert.deepStrictEqual(out.discovered, ["coin", "ruby"]);
+    assert.strictEqual(sanitizeProgress({ carried: Array.from({ length: 500 }, () => "coin") })!.carried!.length, CARRY_MAX);
+  });
+
+  it("keeps owned tool indexes whole, in range and distinct", () => {
+    assert.deepStrictEqual(sanitizeProgress({ owned: [3, 0, 3, 1.5, -1, 9999, "2"] })!.owned, [0, 3]);
+  });
+
+  it("bounds the Daily Gifts, stats and timed spawns", () => {
+    const out = sanitizeProgress({
+      daily: { day: 99, claimed: [true, 1, false, true], nextAt: 1_700_000_000_000 },
+      stats: { stolen: 10.9, heists: -1, earned: 5e9, busts: "x", bestId: "Bad Id!", maxFloor: 0 },
+      spawns: { legendary: 1_700_000_000_000, "bad key!": 5, rare: "soon" },
+      pending: { legendary: true, secret: "yes" },
+    })!;
+    assert.strictEqual(out.daily!.day, DAILY_DAYS);
+    assert.deepStrictEqual(out.daily!.claimed, [true, false, false, true, false, false, false]);
+    assert.strictEqual(out.daily!.nextAt, 1_700_000_000_000);
+    assert.deepStrictEqual(out.stats, { stolen: 10, heists: 0, earned: 5e9, busts: 0, bestId: null, maxFloor: 1 });
+    assert.deepStrictEqual(out.spawns, { legendary: 1_700_000_000_000 });
+    assert.deepStrictEqual(out.pending, { legendary: true });
+  });
+
+  it("is idempotent, so a doc read back from Mongo comes out the same", () => {
+    const once = sanitizeProgress({
+      money: 5, carryCap: 3, unlocked: 4, tool: 2, owned: [0, 2], slots: [{ id: "coin", stored: 1 }], carried: ["ruby"], discovered: ["coin"],
+      rebirths: 1, daily: { day: 2, claimed: [true], nextAt: 5 }, stats: { stolen: 1, maxFloor: 3, bestId: "ruby" }, spawns: { rare: 9 }, pending: {}, lastSeen: 1000,
+    })!;
+    assert.deepStrictEqual(sanitizeProgress(once), once);
   });
 });
