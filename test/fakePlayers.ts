@@ -7,6 +7,9 @@ export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Just what WorldRoom calls: findOne() and updateOne() (upsert, $set, $max, $setOnInsert), plus the
 // leaderboard's find({ f: { $gt } }).sort({ f: -1 }).limit(n).toArray() and countDocuments({ f: { $gt } }).
 // Reads wait for release(), so a test registers its message handlers before the load answers.
+// A doc's value at a dotted path ("stats.earned"), like Mongo's.
+const at = (doc: unknown, path: string): any => path.split(".").reduce<any>((o, k) => (o == null ? o : o[k]), doc);
+
 export function fakePlayers(seed: PlayerDoc[] = []) {
   const docs = new Map<string, PlayerDoc>(seed.map((d) => [d._id, d]));
   let release!: () => void;
@@ -21,11 +24,11 @@ export function fakePlayers(seed: PlayerDoc[] = []) {
     },
     find(filter: Record<string, { $gt: number }>) {
       const [field, { $gt }] = Object.entries(filter)[0];
-      let rows = [...docs.values()].filter((d: any) => d[field] > $gt);
+      let rows = [...docs.values()].filter((d) => at(d, field) > $gt);
       const cursor = {
         sort(by: Record<string, number>) {
           const [f, dir] = Object.entries(by)[0];
-          rows = rows.sort((a: any, b: any) => dir * ((a[f] ?? 0) - (b[f] ?? 0)));
+          rows = rows.sort((a, b) => dir * ((at(a, f) ?? 0) - (at(b, f) ?? 0)));
           return cursor;
         },
         limit(n: number) {
@@ -38,7 +41,7 @@ export function fakePlayers(seed: PlayerDoc[] = []) {
     },
     async countDocuments(filter: Record<string, { $gt: number }>) {
       const [field, { $gt }] = Object.entries(filter)[0];
-      return [...docs.values()].filter((d: any) => d[field] > $gt).length;
+      return [...docs.values()].filter((d) => at(d, field) > $gt).length;
     },
     async updateOne(filter: { _id: string }, update: any, options: any) {
       const existing = docs.get(filter._id);
