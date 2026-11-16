@@ -20,7 +20,7 @@ Read by the Boxity MCP (`audit_sdk` / `integrate_sdk`). Keep it in step with the
 | Auth + server identity (`getToken`, server verifies via `/v1/auth/game-token/verify`, only the returned `user._id` is used) | done |
 | Settings (`master_volume`, `graphics_quality`, `camera_sensitivity`, `show_fps`, `fullscreen`) | done |
 | Avatar / cosmetics (manual path in `src/avatar/`) | done, for every player: each client sends its equipped ids + proportions (never URLs) and rebuilds the others from them (`src/avatar/remotePlayers.js`) |
-| Emotes (`registerFeature('emotes')`, `play_emote` / `stop_emote`, catalogue clips on the rig) | done, replicated: the emote id goes through the server and plays on that player's character for everyone |
+| Emotes (`registerFeature('emotes')`, `play_emote` / `stop_emote`, catalogue clips on the rig, all 34 catalogue emotes checked on player.glb) | done, replicated: the emote id goes through the server and plays on that player's character for everyone |
 | Chat bubbles (`chat.onMessage`, `attachBubble`) | done for every player: `m.userId` is matched to the character whose server-verified account id it is |
 | Death screen | done (see `canDie`) |
 | Ads: ad breaks (pause + mute), screen ads (`declareScreens`, `ads.screen` for `panel`, `gameplay` off), rewarded ad (`free-cash`, token verified by the server) | done |
@@ -32,6 +32,6 @@ Read by the Boxity MCP (`audit_sdk` / `integrate_sdk`). Keep it in step with the
 ## Not applicable / not done
 
 - **Gems purchases (`gems.requestPurchase`, webhook)**: not applicable by design. This game never sells anything for premium currency (see the root `CLAUDE.md`); everything is bought with cash.
-- **CrazyGames / `play_with_friends`**: not registered. The game has no private-room flow of its own; joining is the matchmaker's room plus `?roomId=`.
+- **CrazyGames / `play_with_friends`**: automatic, so the feature is deliberately NOT registered (that is only for games with their own private-room code). The game is hosted on Boxity and joins through the matchmaker (`resolveEndpoint` + `joinOrCreate`), so Boxity opens a private room for the first player and seats invited friends. The game keeps the rules: no host.bloxity.io socket, a room picked by id only for `?roomId=` and for coming back to the SAME room (`net.js` `rejoin`: same session, then same room by id, only then matchmaking), nobody is moved between rooms, `maxClients` 6, no P binding, no own fullscreen button. A sign-in mid-game is applied in place (`identify`), so the player never leaves their friends' room. A page whose account signs in elsewhere stays offline instead of re-joining (the two would evict each other).
 - **Guest progress carry-over (`carriedFrom`)**: guests are never saved, so there is no guest progress to copy.
 - **Hub games, Unity**: not applicable.
