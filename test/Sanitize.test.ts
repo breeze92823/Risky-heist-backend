@@ -66,4 +66,10 @@ describe("sanitizeProgress", () => {
     })!;
     assert.deepStrictEqual(sanitizeProgress(once), once);
   });
+
+  it("keeps the Settings prefs as booleans (on unless explicitly off)", () => {
+    assert.deepStrictEqual(sanitizeProgress({ prefs: { music: false, sfx: "x" } })!.prefs, { music: false, sfx: true });
+    assert.deepStrictEqual(sanitizeProgress({ prefs: 5 })!.prefs, { music: true, sfx: true });
+    assert.strictEqual(sanitizeProgress({})!.prefs, undefined);
+  });
 });

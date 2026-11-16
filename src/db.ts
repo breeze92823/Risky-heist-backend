@@ -26,8 +26,15 @@ export interface PlayerDoc {
   spawns?: Record<string, number>; // rarity -> epoch ms its next timed spawn arrives
   pending?: Record<string, boolean>; // rarity -> a timed spawn waits for the next heist
   lastSeen?: number; // epoch ms of the last activity (collectors fill while away)
+  prefs?: SavedPrefs; // the in-game Settings window
   version: number;
   updatedAt: Date;
+}
+
+// The in-game Settings window: music and sound effects on/off.
+export interface SavedPrefs {
+  music: boolean;
+  sfx: boolean;
 }
 
 // One base slot: the treasure placed on it and the cash its collector holds.
