@@ -2,7 +2,7 @@ import {
   CURRENCY_MAX, REBIRTHS_MAX, COUNT_MAX, TIME_MAX, SLOTS_MAX, CARRY_MAX, TOOLS_MAX, FLOOR_MAX, DISCOVERED_MAX,
   RARITY_KEYS_MAX, DAILY_DAYS, ID_PATTERN,
 } from "./constants.js";
-import type { PlayerDoc, SavedDaily, SavedSlot, SavedStats } from "./db.js";
+import type { PlayerDoc, SavedDaily, SavedPrefs, SavedSlot, SavedStats } from "./db.js";
 
 export function finite(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
@@ -101,5 +101,12 @@ export function sanitizeProgress(raw: unknown): Partial<PlayerDoc> | null {
   if (raw.spawns !== undefined) out.spawns = sanitizeMap(raw.spawns, finite, (v) => clampNum(v, TIME_MAX));
   if (raw.pending !== undefined) out.pending = sanitizeMap(raw.pending, (v): v is boolean => typeof v === "boolean", (v) => v);
   if (finite(raw.lastSeen)) out.lastSeen = clampInt(raw.lastSeen, Date.now() + 10 * 60 * 1000);
+  if (raw.prefs !== undefined) out.prefs = sanitizePrefs(raw.prefs);
   return out;
+}
+
+// The in-game Settings window (music / sound effects on or off): booleans only, true by default.
+export function sanitizePrefs(raw: unknown): SavedPrefs {
+  const p = isObject(raw) ? raw : {};
+  return { music: p.music !== false, sfx: p.sfx !== false };
 }
